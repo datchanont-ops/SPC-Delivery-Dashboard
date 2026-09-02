@@ -10,7 +10,7 @@ import requests
 import base64
 
 # ================= 1. การตั้งค่าหน้าจอและ CSS =================
-st.set_page_config(page_title="Subcontractor Delivery Performance", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SPC Delivery Performance Dashboard", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
     <style>
@@ -98,7 +98,6 @@ def save_to_github(df, token, repo, path, branch):
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
     headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
     
-    # Check if file exists to get SHA
     response = requests.get(url, headers=headers, params={"ref": branch})
     sha = response.json().get('sha') if response.status_code == 200 else None
 
@@ -122,7 +121,7 @@ def load_from_github(token, repo, path, branch):
     return None
 
 # ================= 3. ส่วนแสดงผล Sidebar =================
-st.title("🏭 SPC Delivery Dashboard")
+st.title("🏭 SPC Delivery Performance Dashboard")
 st.markdown("ระบบวิเคราะห์และติดตามสถานะการส่งมอบชิ้นงานของ Subcontractor (Plan vs Actual)")
 
 with st.sidebar:
@@ -141,7 +140,6 @@ with st.sidebar:
     st.markdown("---")
     st.header("☁️ 2. จัดการข้อมูลกับ GitHub (Cloud Sync)")
     
-    # ดึงค่าจาก Streamlit Secrets
     try:
         gh_token = st.secrets["GITHUB_TOKEN"]
         gh_repo = st.secrets["GITHUB_REPO"]
