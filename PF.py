@@ -209,8 +209,22 @@ if not st.session_state.df_merged.empty:
     with tab1:
         st.markdown("### เปรียบเทียบแผนและการส่งมอบราย Subcontractor พร้อม % ความสำเร็จ")
         fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_trace(go.Bar(x=df_sub['Subcontractor'], y=df_sub['Plan_Qty'], name='Plan (แผน)', marker_color='#1E3A8A'), secondary_y=False)
-        fig.add_trace(go.Bar(x=df_sub['Subcontractor'], y=df_sub['Actual_Qty'], name='Actual (รับจริง)', marker_color='#10B981'), secondary_y=False)
+        
+        # เพิ่มแท่งกราฟ Plan พร้อมตัวเลข
+        fig.add_trace(go.Bar(
+            x=df_sub['Subcontractor'], y=df_sub['Plan_Qty'], name='Plan (แผน)', 
+            marker_color='#1E3A8A', 
+            text=df_sub['Plan_Qty'].apply(lambda x: f"{x:,.0f}"), textposition='auto'
+        ), secondary_y=False)
+        
+        # เพิ่มแท่งกราฟ Actual พร้อมตัวเลข
+        fig.add_trace(go.Bar(
+            x=df_sub['Subcontractor'], y=df_sub['Actual_Qty'], name='Actual (รับจริง)', 
+            marker_color='#10B981',
+            text=df_sub['Actual_Qty'].apply(lambda x: f"{x:,.0f}"), textposition='auto'
+        ), secondary_y=False)
+        
+        # เพิ่มเส้นกราฟ % Achievement
         fig.add_trace(
             go.Scatter(x=df_sub['Subcontractor'], y=df_sub['Achievement %'], name='Achievement %', mode='lines+markers+text', 
                        text=df_sub['Achievement %'].apply(lambda x: f"{x:.1f}%"), textposition="top center",
@@ -243,10 +257,31 @@ if not st.session_state.df_merged.empty:
 
     with tab3:
         st.markdown("### ข้อมูลเชิงลึก (Raw Data)")
-        df_display = df_filtered.copy()
+        
+        # ตัวกรองย่อยเฉพาะในหน้า Tab 3
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            raw_sub_filter = st.multiselect("กรอง Subcontractor (เฉพาะตารางด้านล่าง)", options=sorted(df_filtered['Subcontractor'].unique()), default=df_filtered['Subcontractor'].unique(), key="raw_sub")
+        with col_t2:
+            raw_part_search = st.text_input("🔍 ค้นหา Part (พิมพ์ชื่อบางส่วนได้ หากหาหลาย Part ให้ใช้เครื่องหมาย , คั่น)", placeholder="เช่น 1209, K1MA, Z0H")
+            
+        # ประมวลผลการกรองข้อมูล
+        df_display = df_filtered[df_filtered['Subcontractor'].isin(raw_sub_filter)].copy()
+        
+        # การค้นหา Part แบบยืดหยุ่น (พิมพ์แค่บางส่วน หรือ ค้นหาหลายคำพร้อมกัน)
+        if raw_part_search:
+            search_terms = [term.strip().upper() for term in raw_part_search.split(',')]
+            conditions = [df_display['Part'].str.upper().str.contains(term) for term in search_terms if term]
+            if conditions:
+                combined_condition = conditions[0]
+                for c in conditions[1:]:
+                    combined_condition = combined_condition | c
+                df_display = df_display[combined_condition]
+                
         df_display['Date'] = df_display['Date'].dt.strftime('%Y-%m-%d')
         df_display = df_display.sort_values(by=['Date', 'Subcontractor', 'Part'])
         
+        # ปุ่มส่งออก Excel
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_display.to_excel(writer, index=False, sheet_name='Detailed_Data')
