@@ -122,7 +122,7 @@ def load_from_github(token, repo, path, branch):
     return None
 
 # ================= 3. ส่วนแสดงผล Sidebar =================
-st.title("🏭 Subcontractor Delivery Dashboard")
+st.title("🏭 SPC Delivery Dashboard")
 st.markdown("ระบบวิเคราะห์และติดตามสถานะการส่งมอบชิ้นงานของ Subcontractor (Plan vs Actual)")
 
 with st.sidebar:
