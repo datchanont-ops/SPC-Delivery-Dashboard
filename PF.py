@@ -50,12 +50,39 @@ def process_data(plan_files, actual_file):
         xls = pd.ExcelFile(file)
         target_sheet = get_target_sheet(xls)
         df = pd.read_excel(xls, sheet_name=target_sheet)
-        headers = [h.strftime('%Y-%m-%d') if isinstance(h, pd.Timestamp) else h.split(' ')[0] if isinstance(h, str) and '00:00:00' in h else str(h) for h in df.iloc[1].tolist()]
-        df = df.iloc[2:].copy()
-        df.columns = headers
         
-        date_cols = [c for c in headers if re.match(r'\d{4}-\d{2}-\d{2}', str(c))]
-        if 'Part No.' in df.columns:
+        # จัดการ Header ของแผน
+        raw_headers = df.iloc[1].tolist()
+        cleaned_headers = []
+        for h in raw_headers:
+            if isinstance(h, pd.Timestamp):
+                cleaned_headers.append(h.strftime('%Y-%m-%d'))
+            elif isinstance(h, str) and '00:00:00' in h:
+                cleaned_headers.append(h.split(' ')[0])
+            else:
+                cleaned_headers.append(str(h).strip())
+                
+        df = df.iloc[2:].copy()
+        df.columns = cleaned_headers
+        
+        date_cols = [c for c in cleaned_headers if re.match(r'\d{4}-\d{2}-\d{2}', str(c))]
+        
+        if 'Part No.' in df.columns and len(date_cols) > 0:
+            first_date = sorted(date_cols)[0] # หาวันที่ 1 ของเดือน
+            
+            # ค้นหาคอลัมน์ Backlog (งานค้าง)
+            backlog_col = None
+            for col in cleaned_headers:
+                if 'back' in str(col).lower():
+                    backlog_col = col
+                    break
+            
+            # นำยอด Backlog ทบเข้ากับวันที่ 1
+            if backlog_col and backlog_col in df.columns:
+                df[backlog_col] = pd.to_numeric(df[backlog_col], errors='coerce').fillna(0)
+                df[first_date] = pd.to_numeric(df[first_date], errors='coerce').fillna(0) + df[backlog_col]
+            
+            # นำมาแปลงให้อยู่ในรูปแบบรายวัน
             df_melted = df.melt(id_vars=['Part No.'], value_vars=date_cols, var_name='Date', value_name='Plan_Qty')
             df_melted['Subcontractor'] = standardize_sub_name(file.name.split(' ')[0])
             df_melted = df_melted.dropna(subset=['Part No.'])
@@ -67,6 +94,7 @@ def process_data(plan_files, actual_file):
             
     df_plan = pd.concat(df_plan_list) if df_plan_list else pd.DataFrame()
 
+    # จัดการไฟล์ Actual
     if actual_file:
         df_actual_raw = pd.read_excel(actual_file)
         df_actual = df_actual_raw.iloc[:, [0, 2, 6, 10]].copy()
@@ -79,6 +107,7 @@ def process_data(plan_files, actual_file):
     else:
         df_actual = pd.DataFrame(columns=['Date', 'Subcontractor', 'Part', 'Actual_Qty'])
 
+    # รวมข้อมูลเข้าด้วยกัน
     if not df_plan.empty and not df_actual.empty:
         df_merged = pd.merge(df_plan, df_actual, on=['Date', 'Subcontractor', 'Part'], how='outer').fillna(0)
     elif not df_plan.empty:
@@ -123,6 +152,9 @@ def load_from_github(token, repo, path, branch):
 # ================= 3. ส่วนแสดงผล Sidebar =================
 st.title("🏭 SPC Delivery Performance Dashboard")
 st.markdown("ระบบวิเคราะห์และติดตามสถานะการส่งมอบชิ้นงานของ Subcontractor (Plan vs Actual)")
+
+# เพิ่มกล่องข้อความแจ้งเตือนผู้ใช้งานเรื่องการรวม Backlog
+st.info("📌 **หมายเหตุ:** แผนการส่งงาน (Plan) ของ **วันที่ 1 ของเดือน** ได้รวมยอดงานค้างส่ง (Backlog) จากเดือนที่แล้วเข้ามาคำนวณเรียบร้อยแล้ว")
 
 with st.sidebar:
     st.header("⚙️ 1. อัปโหลดข้อมูลใหม่")
@@ -210,21 +242,18 @@ if not st.session_state.df_merged.empty:
         st.markdown("### เปรียบเทียบแผนและการส่งมอบราย Subcontractor พร้อม % ความสำเร็จ")
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
-        # เพิ่มแท่งกราฟ Plan พร้อมตัวเลข
         fig.add_trace(go.Bar(
             x=df_sub['Subcontractor'], y=df_sub['Plan_Qty'], name='Plan (แผน)', 
             marker_color='#1E3A8A', 
             text=df_sub['Plan_Qty'].apply(lambda x: f"{x:,.0f}"), textposition='auto'
         ), secondary_y=False)
         
-        # เพิ่มแท่งกราฟ Actual พร้อมตัวเลข
         fig.add_trace(go.Bar(
             x=df_sub['Subcontractor'], y=df_sub['Actual_Qty'], name='Actual (รับจริง)', 
             marker_color='#10B981',
             text=df_sub['Actual_Qty'].apply(lambda x: f"{x:,.0f}"), textposition='auto'
         ), secondary_y=False)
         
-        # เพิ่มเส้นกราฟ % Achievement
         fig.add_trace(
             go.Scatter(x=df_sub['Subcontractor'], y=df_sub['Achievement %'], name='Achievement %', mode='lines+markers+text', 
                        text=df_sub['Achievement %'].apply(lambda x: f"{x:.1f}%"), textposition="top center",
@@ -258,17 +287,14 @@ if not st.session_state.df_merged.empty:
     with tab3:
         st.markdown("### ข้อมูลเชิงลึก (Raw Data)")
         
-        # ตัวกรองย่อยเฉพาะในหน้า Tab 3
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             raw_sub_filter = st.multiselect("กรอง Subcontractor (เฉพาะตารางด้านล่าง)", options=sorted(df_filtered['Subcontractor'].unique()), default=df_filtered['Subcontractor'].unique(), key="raw_sub")
         with col_t2:
             raw_part_search = st.text_input("🔍 ค้นหา Part (พิมพ์ชื่อบางส่วนได้ หากหาหลาย Part ให้ใช้เครื่องหมาย , คั่น)", placeholder="เช่น 1209, K1MA, Z0H")
             
-        # ประมวลผลการกรองข้อมูล
         df_display = df_filtered[df_filtered['Subcontractor'].isin(raw_sub_filter)].copy()
         
-        # การค้นหา Part แบบยืดหยุ่น (พิมพ์แค่บางส่วน หรือ ค้นหาหลายคำพร้อมกัน)
         if raw_part_search:
             search_terms = [term.strip().upper() for term in raw_part_search.split(',')]
             conditions = [df_display['Part'].str.upper().str.contains(term) for term in search_terms if term]
@@ -281,7 +307,6 @@ if not st.session_state.df_merged.empty:
         df_display['Date'] = df_display['Date'].dt.strftime('%Y-%m-%d')
         df_display = df_display.sort_values(by=['Date', 'Subcontractor', 'Part'])
         
-        # ปุ่มส่งออก Excel
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_display.to_excel(writer, index=False, sheet_name='Detailed_Data')
