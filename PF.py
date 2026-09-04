@@ -71,14 +71,15 @@ def process_data(plan_files, actual_file, include_backlog):
             
             backlog_col = next((col for col in cleaned_headers if 'back' in str(col).lower()), None)
             
+            # บังคับแปลงเป็น string ก่อนเพื่อป้องกันบั๊กแปลงเวลาเป็นเลขมหาศาล
             if backlog_col and backlog_col in df.columns:
-                df['Backlog_Qty'] = pd.to_numeric(df[backlog_col], errors='coerce').fillna(0)
+                df['Backlog_Qty'] = pd.to_numeric(df[backlog_col].astype(str), errors='coerce').fillna(0)
             else:
                 df['Backlog_Qty'] = 0
 
-            # นำยอด Backlog ทบเข้ากับวันที่ 1 หากผู้ใช้เลือก
+            # นำยอด Backlog ทบเข้ากับวันที่ 1 หากผู้ใช้เลือก (บังคับแปลงเป็น string ก่อนเช่นกัน)
             if include_backlog:
-                df[first_date] = pd.to_numeric(df[first_date], errors='coerce').fillna(0) + df['Backlog_Qty']
+                df[first_date] = pd.to_numeric(df[first_date].astype(str), errors='coerce').fillna(0) + df['Backlog_Qty']
             
             df_melted = df.melt(id_vars=['Part No.', 'Backlog_Qty'], value_vars=date_cols, var_name='Date', value_name='Plan_Qty')
             df_melted['Subcontractor'] = standardize_sub_name(file.name.split(' ')[0])
@@ -92,8 +93,11 @@ def process_data(plan_files, actual_file, include_backlog):
                 df_melted.loc[mask_backlog, 'Remark'] = "มีงานค้าง " + df_melted.loc[mask_backlog, 'Backlog_Qty'].astype(int).astype(str) + " ชิ้น (ไม่รวมในแผน)"
 
             df_melted = df_melted.dropna(subset=['Part No.'])
-            df_melted['Plan_Qty'] = pd.to_numeric(df_melted['Plan_Qty'], errors='coerce').fillna(0)
-            df_melted = df_melted[(df_melted['Plan_Qty'] > 0) | (df_melted['Remark'] != "-")] # เก็บ Row ที่มี Remark ไว้แสดงแม้ Plan เป็น 0
+            
+            # บังคับแปลง Plan_Qty เป็น string ก่อนเพื่อดัก Format วันที่แปลกปลอมจาก Excel
+            df_melted['Plan_Qty'] = pd.to_numeric(df_melted['Plan_Qty'].astype(str), errors='coerce').fillna(0)
+            
+            df_melted = df_melted[(df_melted['Plan_Qty'] > 0) | (df_melted['Remark'] != "-")]
             df_melted['Part'] = df_melted['Part No.'].astype(str).str.strip()
             df_melted['Date'] = pd.to_datetime(df_melted['Date'], errors='coerce')
             df_plan_list.append(df_melted[['Date', 'Subcontractor', 'Part', 'Plan_Qty', 'Remark']])
@@ -107,7 +111,9 @@ def process_data(plan_files, actual_file, include_backlog):
         df_actual['Part'] = df_actual['Part'].astype(str).str.strip()
         df_actual['Date'] = pd.to_datetime(df_actual['Date'], errors='coerce')
         df_actual['Subcontractor'] = df_actual['Sub_Code_Raw'].apply(lambda x: standardize_sub_name(str(x).split('/')[2]) if len(str(x).split('/')) > 2 else 'Unknown')
-        df_actual['Actual_Qty'] = pd.to_numeric(df_actual['Actual_Qty'], errors='coerce').fillna(0)
+        
+        # บังคับแปลงเป็น string ก่อน
+        df_actual['Actual_Qty'] = pd.to_numeric(df_actual['Actual_Qty'].astype(str), errors='coerce').fillna(0)
         df_actual = df_actual.groupby(['Date', 'Subcontractor', 'Part'])['Actual_Qty'].sum().reset_index()
     else:
         df_actual = pd.DataFrame(columns=['Date', 'Subcontractor', 'Part', 'Actual_Qty'])
@@ -248,6 +254,7 @@ if not st.session_state.df_merged.empty:
     
     with tab1:
         st.markdown("### เปรียบเทียบแผนและการส่งมอบราย Subcontractor พร้อม % ความสำเร็จ")
+        st.caption("📌 หมายเหตุ: ตัวเลขแผน (Plan) จะแปรผันตามการตั้งค่า 'นำงานค้างมารวม' ที่แถบเมนูด้านซ้าย")
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
         fig.add_trace(go.Bar(
@@ -292,7 +299,7 @@ if not st.session_state.df_merged.empty:
 
     with tab3:
         st.markdown("### ข้อมูลเชิงลึก (Raw Data)")
-        st.caption("📌 หมายเหตุ: สามารถตรวจสอบการเพิ่มยอดงานค้างส่ง (Backlog) ได้ที่คอลัมน์ Remark")
+        st.caption("📌 หมายเหตุ: สามารถตรวจสอบการบวกยอดงานค้างส่ง (Backlog) ได้ที่คอลัมน์ Remark ของวันที่ 1")
         
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -320,10 +327,11 @@ if not st.session_state.df_merged.empty:
         st.download_button(label="📥 ดาวน์โหลดข้อมูล (Export to Excel)", data=buffer.getvalue(), file_name="Subcontractor_Detailed_Data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         
         st.markdown("<br>", unsafe_allow_html=True)
-        # นำ Remark มาแสดงผลในตาราง
         columns_to_show = ['Date', 'Subcontractor', 'Part', 'Plan_Qty', 'Actual_Qty', 'Diff', 'Status', 'Achievement %', 'Remark']
         st.dataframe(
             df_display[columns_to_show].style.format({'Plan_Qty': '{:,.0f}', 'Actual_Qty': '{:,.0f}', 'Diff': '{:,.0f}', 'Achievement %': '{:.1f}%'})
             .map(lambda x: 'color: #EF4444' if x == '❌ Shortage' else 'color: #10B981', subset=['Status']),
             use_container_width=True, height=500
         )
+else:
+    st.info("👈 กรุณาประมวลผลไฟล์ Excel หรือโหลดข้อมูลจาก GitHub ทางด้านซ้ายมือเพื่อเริ่มต้น")
